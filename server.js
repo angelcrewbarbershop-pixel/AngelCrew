@@ -23,7 +23,6 @@ const loginLimiter = rateLimit({
 });
 
 // --- CONEXIÓN A MONGODB ---
-// Usando tu clave limpia Barberia2026 que creaste en Atlas
 const MONGO_URI = process.env.MONGO_URI;
 
 if (!MONGO_URI) {
@@ -59,30 +58,34 @@ const Barber = mongoose.model('Barber', new mongoose.Schema({
     status: { type: String, default: 'Disponible' },
     username: { type: String, required: false },
     password: { type: String, required: false },
-    image: { type: String, required: false } // 🔥 EL NUEVO CAMPO PARA LA URL DE LA FOTO
+    image: { type: String, required: false }
 }));
 
-// 🔥 3. MODELO DE SERVICIOS ACTUALIZADO (Con descripción y duración)
-// 🔥 EL NUEVO MODELO DE SERVICIOS
 const Service = mongoose.model('Service', new mongoose.Schema({
     name: { type: String, required: true },
     price: { type: Number, required: true },
-    description: { type: String, required: false }, // ESTO PERMITE GUARDAR LA DESCRIPCIÓN
-    duration: { type: Number, default: 1 } // ESTO PERMITE GUARDAR LAS 2 HORAS
+    description: { type: String, required: false }, 
+    duration: { type: Number, default: 1 } 
 }));
 
 // --- RUTAS DE API ---
 
 // Login
 app.post('/api/login', loginLimiter, async (req, res) => {
-    const { username, password } = req.body;
     try {
-        if (username === 'admin' && password === 'barberia123') {
+        const { username, password } = req.body;
+        
+        // 🔥 Limpieza de datos entrantes para evitar fallos por espacios invisibles o mayúsculas
+        const loginUser = username ? username.trim().toLowerCase() : '';
+        const loginPass = password ? password.trim() : '';
+
+        if (loginUser === 'admin' && loginPass === 'barberia123') {
             return res.json({ role: 'admin' });
         }
-        const barber = await Barber.findOne({ username });
+        
+        const barber = await Barber.findOne({ username: loginUser });
         if (barber && barber.password) {
-            const passwordMatch = await bcrypt.compare(password, barber.password);
+            const passwordMatch = await bcrypt.compare(loginPass, barber.password);
             if (passwordMatch) {
                 return res.json({ role: 'barber', barber });
             }
@@ -102,9 +105,15 @@ app.get('/api/barbers', async (req, res) => {
 app.post('/api/barbers', async (req, res) => {
     try {
         const datosBarber = req.body;
-        if (datosBarber.password) {
-            datosBarber.password = await bcrypt.hash(datosBarber.password, 10);
+        
+        // 🔥 Limpiar usuario y contraseña al crear
+        if (datosBarber.username) {
+            datosBarber.username = datosBarber.username.trim().toLowerCase();
         }
+        if (datosBarber.password) {
+            datosBarber.password = await bcrypt.hash(datosBarber.password.trim(), 10);
+        }
+        
         const nuevo = new Barber(datosBarber);
         await nuevo.save();
         res.json(nuevo);
@@ -114,9 +123,20 @@ app.post('/api/barbers', async (req, res) => {
 app.put('/api/barbers/:id', async (req, res) => {
     try {
         const datosActualizar = req.body;
-        if (datosActualizar.password) {
-            datosActualizar.password = await bcrypt.hash(datosActualizar.password, 10);
+        
+        // 🔥 1. Limpiar usuario si se está actualizando
+        if (datosActualizar.username) {
+            datosActualizar.username = datosActualizar.username.trim().toLowerCase();
         }
+
+        // 🔥 2. EVITAR DOBLE HASHING: Solo encriptar si la contraseña no está encriptada ya
+        if (datosActualizar.password) {
+            datosActualizar.password = datosActualizar.password.trim();
+            if (!datosActualizar.password.startsWith('$2b$') && !datosActualizar.password.startsWith('$2a$')) {
+                datosActualizar.password = await bcrypt.hash(datosActualizar.password, 10);
+            }
+        }
+
         await Barber.findByIdAndUpdate(req.params.id, datosActualizar);
         res.json({ success: true });
     } catch (err) { res.status(500).json({ error: err.message }); }
